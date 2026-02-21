@@ -1020,20 +1020,31 @@
 
         // Initialize Map
         function initMap() {
-            map = new google.maps.Map(document.getElementById('map'), {
-                center: { lat: 37.5665, lng: 126.9780 }, // Default: Seoul
-                zoom: 12,
-                styles: getMapStyles(),
-                disableDefaultUI: false,
-                zoomControl: true,
-                mapTypeControl: false,
-                streetViewControl: false,
-                fullscreenControl: true
-            });
-
-            infoWindow = new google.maps.InfoWindow();
-            updateFavoritesCount();
+            try {
+                map = new google.maps.Map(document.getElementById('map'), {
+                    center: { lat: 37.5665, lng: 126.9780 },
+                    zoom: 12,
+                    styles: getMapStyles(),
+                    disableDefaultUI: false,
+                    zoomControl: true,
+                    mapTypeControl: false,
+                    streetViewControl: false,
+                    fullscreenControl: true
+                });
+                infoWindow = new google.maps.InfoWindow();
+                updateFavoritesCount();
+            } catch(e) {
+                console.error('Map init error:', e);
+                document.getElementById('map').innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:#ef4444;font-size:13px;padding:20px;text-align:center">⚠️ 지도를 불러올 수 없습니다.<br>' + e.message + '</div>';
+            }
         }
+        window.initMap = initMap;
+
+        // API 인증 실패 핸들러
+        window.gm_authFailure = function() {
+            document.getElementById('map').innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:#ef4444;font-size:13px;padding:20px;text-align:center">⚠️ Google Maps API 키 오류<br><small>Cloud Console에서 Maps JavaScript API가 활성화되어 있는지 확인하세요</small></div>';
+            console.error('Google Maps API 인증 실패 - API 키 또는 Maps JavaScript API 미활성화');
+        };
 
         function getMapStyles() {
             const isDark = !document.body.classList.contains('light-mode');
@@ -1715,8 +1726,9 @@
         });
     </script>
 
-    <script async defer
-        src="https://maps.googleapis.com/maps/api/js?key=AIzaSyCqSLJUWJnLLrXpXFzEwQqcTf3-7prKa-4&callback=initMap">
+    <script
+        src="https://maps.googleapis.com/maps/api/js?key=AIzaSyCqSLJUWJnLLrXpXFzEwQqcTf3-7prKa-4&callback=initMap&loading=async"
+        async defer>
     </script>
 </body>
 </html>
