@@ -1286,8 +1286,9 @@
                 return false;
             }
 
-            // Exclude broad place types that sometimes appear in results (malls, stores, lodging, etc.)
-            const excludeTypes = ['shopping_mall', 'department_store', 'store', 'lodging', 'point_of_interest', 'establishment'];
+            // Exclude obvious non-matching POI types that frequently pollute restaurant results
+            // Note: do NOT exclude 'point_of_interest'/'establishment' globally because many valid POIs use them.
+            const excludeTypes = ['shopping_mall', 'department_store', 'store', 'lodging'];
 
             if (includedTypes && includedTypes.length > 0) {
                 places = places.filter(p => {
