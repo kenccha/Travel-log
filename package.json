@@ -1,0 +1,24 @@
+{
+  "name": "world-top-spots",
+  "version": "1.0.0",
+  "description": "전세계 도시의 인기 장소를 Google Places API로 찾아주는 웹 앱.",
+  "main": "keys.example.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kenccha/Travel-log.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/kenccha/Travel-log/issues"
+  },
+  "homepage": "https://github.com/kenccha/Travel-log#readme",
+  "devDependencies": {
+    "playwright": "^1.58.2"
+  }
+}
