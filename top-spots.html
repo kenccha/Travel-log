@@ -1373,7 +1373,7 @@
 
         // Search places by category
         async function searchPlacesByCategory(category, maxCount) {
-            const includedTypes = categoryIncludedTypes[category];
+            const includedTypes = categoryIncludedTypes[category] || [];
             
             const requestBody = {
                 locationRestriction: {
@@ -1399,7 +1399,7 @@
                 headers: {
                     'Content-Type': 'application/json',
                     'X-Goog-Api-Key': API_KEY,
-                    'X-Goog-FieldMask': 'places.id,places.displayName,places.formattedAddress,places.rating,places.userRatingCount,places.priceLevel,places.types,places.photos,places.primaryType,places.location,places.openingHours,places.currentOpeningHours'
+                    'X-Goog-FieldMask': 'places.id,places.displayName,places.formattedAddress,places.rating,places.userRatingCount,places.priceLevel,places.types,places.photos,places.primaryType,places.location'
                 },
                 body: JSON.stringify(requestBody)
             });
@@ -1442,10 +1442,10 @@
                 const textResp = await fetch('https://places.googleapis.com/v1/places:searchText', {
                     method: 'POST',
                     headers: {
-                        'Content-Type': 'application/json',
-                        'X-Goog-Api-Key': API_KEY,
-                        'X-Goog-FieldMask': 'places.id,places.displayName,places.formattedAddress,places.rating,places.userRatingCount,places.priceLevel,places.types,places.photos,places.primaryType,places.location,places.openingHours,places.currentOpeningHours'
-                    },
+                            'Content-Type': 'application/json',
+                            'X-Goog-Api-Key': API_KEY,
+                            'X-Goog-FieldMask': 'places.id,places.displayName,places.formattedAddress,places.rating,places.userRatingCount,places.priceLevel,places.types,places.photos,places.primaryType,places.location'
+                        },
                     body: JSON.stringify(textRequest)
                 });
 
