@@ -914,9 +914,6 @@
             <button class="tab-btn" data-category="cafe" onclick="setCategory('cafe')">
                 ☕ 카페·바 <span class="tab-count" id="count-cafe">0</span>
             </button>
-            <button class="tab-btn" data-category="top_restaurants" onclick="setCategory('top_restaurants')">
-                🍽️ 최고 레스토랑 (≥500리뷰) <span class="tab-count" id="count-top-restaurants">0</span>
-            </button>
             <button class="tab-btn" data-category="fine_dining" onclick="setCategory('fine_dining')">
                 🥂 파인다이닝 <span class="tab-count" id="count-fine-dining">0</span>
             </button>
@@ -961,8 +958,6 @@
         
         // State
         let currentLocation = { name: '', lat: null, lng: null };
-        // Minimum reviews threshold for the "Top Restaurants" tab
-        const MIN_TOP_RESTAURANT_REVIEWS = 500;
         let currentRadius = 15000;
         let currentCategory = 'all';
         let currentPriceFilter = 'all';
@@ -1318,13 +1313,10 @@
             document.getElementById('count-attraction').textContent = placesData.attraction.length;
             document.getElementById('count-restaurant').textContent = placesData.restaurant.length;
             document.getElementById('count-cafe').textContent = placesData.cafe.length;
-            // count for top restaurants (>= threshold)
-            document.getElementById('count-top-restaurants').textContent = (placesData.restaurant || []).filter(p => (p.userRatingCount || 0) >= MIN_TOP_RESTAURANT_REVIEWS).length;
-            // count for fine dining: price level $$$ or $$$$, rating >= 4.0, reviews >= 100
+            // count for fine dining: rating >= 4.3 + reviews >= 200 (priceLevel 데이터 불안정으로 제외)
             document.getElementById('count-fine-dining').textContent = (placesData.restaurant || []).filter(p =>
-                getPriceLevelNumber(p.priceLevel) >= 3 &&
-                (p.rating || 0) >= 4.0 &&
-                (p.userRatingCount || 0) >= 100
+                (p.rating || 0) >= 4.3 &&
+                (p.userRatingCount || 0) >= 200
             ).length;
         }
 
@@ -1339,15 +1331,11 @@
             // 카테고리별 데이터 선택
             if (currentCategory === 'favorites') {
                 filteredPlaces = [...favorites];
-            } else if (currentCategory === 'top_restaurants') {
-                // use restaurant results but require minimum reviews
-                filteredPlaces = (placesData.restaurant || []).filter(p => (p.userRatingCount || 0) >= MIN_TOP_RESTAURANT_REVIEWS);
             } else if (currentCategory === 'fine_dining') {
-                // fine dining: $$$ or $$$$ + rating >= 4.0 + reviews >= 100, sorted by rating desc
+                // 파인다이닝: rating >= 4.3 + reviews >= 200, 평점순 정렬
                 filteredPlaces = (placesData.restaurant || []).filter(p =>
-                    getPriceLevelNumber(p.priceLevel) >= 3 &&
-                    (p.rating || 0) >= 4.0 &&
-                    (p.userRatingCount || 0) >= 100
+                    (p.rating || 0) >= 4.3 &&
+                    (p.userRatingCount || 0) >= 200
                 );
                 filteredPlaces.sort((a, b) => (b.rating || 0) - (a.rating || 0) || (b.userRatingCount || 0) - (a.userRatingCount || 0));
             } else {
@@ -1406,7 +1394,6 @@
                 attraction: '관광지·명소',
                 restaurant: '음식점',
                 cafe: '카페·바',
-                top_restaurants: '최고 레스토랑 (500+)',
                 fine_dining: '파인다이닝',
                 favorites: '즐겨찾기'
             };
@@ -1456,7 +1443,7 @@
                          data-place-id="${place.id}"
                          onmouseenter="highlightMarker('${place.id}')"
                          onmouseleave="unhighlightMarker('${place.id}')"
-                         onclick="openGoogleMaps('${encodeURIComponent(place.displayName?.text || '')}', ${place.location?.latitude || 0}, ${place.location?.longitude || 0})">
+                         onclick="openGoogleMaps('${encodeURIComponent(place.displayName?.text || '')}', ${place.location?.latitude || 0}, ${place.location?.longitude || 0}, '${place.id || ''}')">
                         <div class="place-image-container">
                             ${photoUrl 
                                 ? `<img src="${photoUrl}" alt="${place.displayName?.text || ''}" class="place-image" loading="lazy" onerror="this.parentElement.innerHTML='<div class=\\'no-image\\'>📍</div>'">`
@@ -1626,8 +1613,14 @@
         }
 
         // Open Google Maps
-        function openGoogleMaps(name, lat, lng) {
-            const url = `https://www.google.com/maps/search/?api=1&query=${lat},${lng}&query_place_id=${name}`;
+        function openGoogleMaps(name, lat, lng, placeId) {
+            let url;
+            if (placeId) {
+                // Place ID가 있으면 정확한 장소로 직접 연결
+                url = `https://www.google.com/maps/search/?api=1&query=${name}&query_place_id=${placeId}`;
+            } else {
+                url = `https://www.google.com/maps/search/?api=1&query=${name}&query=${lat},${lng}`;
+            }
             window.open(url, '_blank');
         }
 
