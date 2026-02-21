@@ -952,7 +952,7 @@
 
             <div class="control-group">
                 <span class="control-label">키워드 검색</span>
-                <input id="customQuery" class="search-input" placeholder="예: 루프탑 바, 오마카세" style="width:220px;padding:8px 10px;font-size:12px">
+                <input id="customQuery" list="recentQueriesList" class="search-input" placeholder="예: 루프탑 바, 오마카세" style="width:220px;padding:8px 10px;font-size:12px">
                 <button class="radius-btn" onclick="handleCustomSearch()">검색</button>
             </div>
 
@@ -1108,7 +1108,9 @@
 
                 const planSnap = await _db.collection('users').doc(uid).collection('data').doc('planner').get();
                 if (planSnap.exists) {
-                    planner = planSnap.data();
+                    const pData = planSnap.data();
+                    // days_json 형식(새 형식)과 days 배열 형식(구 형식) 모두 지원
+                    planner = { days: JSON.parse(pData.days_json || JSON.stringify(planner.days)) };
                 } else {
                     await savePlanner();
                 }
@@ -1120,8 +1122,9 @@
         function loadLocalData() {
             // 로그아웃 시 localStorage 기반으로 복구
             favorites = JSON.parse(localStorage.getItem('favorites_v2') || '[]');
-            planner   = JSON.parse(localStorage.getItem('itinerary_v1') || JSON.stringify({ days: [[]] }));
+            planner   = JSON.parse(localStorage.getItem('itinerary_v1') || '{"days":[[null,null,null,null,null,null,null,null,null]]}');
             updateFavoritesCount();
+            if (typeof applySortAndFilter === 'function') applySortAndFilter();
         }
 
         async function saveFavorites() {
@@ -1138,7 +1141,10 @@
             localStorage.setItem('itinerary_v1', JSON.stringify(planner));
             if (!_db || !currentUser) return;
             try {
-                await _db.collection('users').doc(currentUser.uid).collection('data').doc('planner').set(planner);
+                // Firestore는 중첩 배열 미지원 → days를 JSON 문자열로 직렬화
+                await _db.collection('users').doc(currentUser.uid).collection('data').doc('planner').set({
+                    days_json: JSON.stringify(planner.days)
+                });
             } catch (e) {
                 console.warn('Firestore save planner error:', e);
             }
@@ -1148,7 +1154,7 @@
         document.addEventListener('DOMContentLoaded', initFirebase);
     </script>
     <script>
-        const API_KEY = (window.APP_KEYS && window.APP_KEYS.BROWSER_KEY) || '';
+        const API_KEY = 'AIzaSyCqSLJUWJnLLrXpXFzEwQqcTf3-7prKa-4';
         
         // State
         let currentLocation = { name: '', lat: null, lng: null };
@@ -1173,7 +1179,7 @@
         let recentQueries = JSON.parse(localStorage.getItem('recentQueries_v1') || '[]');
 
         // Planner state: array of days each with an array of place IDs
-        let planner = JSON.parse(localStorage.getItem('itinerary_v1') || JSON.stringify({ days: [ [] ] }));
+        let planner = JSON.parse(localStorage.getItem('itinerary_v1') || '{"days":[[null,null,null,null,null,null,null,null,null]]}');
 
         // Distance Matrix cache (session) to reduce repeated requests: key = originLat,originLng|destLat,destLng
         const distanceCache = {};
@@ -2321,7 +2327,7 @@
 
         function closePlanner() { const el = document.getElementById('plannerPanel'); if (el) el.remove(); }
 
-        function addPlannerDay() { planner.days.push([]); savePlanner(); renderPlanner(); }
+        function addPlannerDay() { planner.days.push(Array(9).fill(null)); savePlanner(); renderPlanner(); }
 
         function renderPlanner() {
             const cont = document.getElementById('plannerDaysContainer');
@@ -2494,6 +2500,13 @@
         document.getElementById('searchInput').addEventListener('keypress', (e) => {
             if (e.key === 'Enter' && !isLoading) {
                 handleSearch();
+            }
+        });
+
+        // Enter key for keyword search
+        document.getElementById('customQuery').addEventListener('keypress', (e) => {
+            if (e.key === 'Enter' && !isLoading) {
+                handleCustomSearch();
             }
         });
 
