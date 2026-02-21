@@ -839,10 +839,14 @@
 <body>
     <!-- Header -->
     <header class="header">
-        <div class="header-content">
+                        <div class="place-content">
+                            <h3 class="place-name">${place.displayName?.text || '이름 없음'}</h3>
+                            <p class="place-address">${place.formattedAddress || '주소 정보 없음'}</p>
+                            <div class="place-stats">
             <div class="logo">TOP SPOTS</div>
             <div class="search-container">
-                <input type="text" class="search-input" id="searchInput" placeholder="도시, 주소, 장소명 검색 (예: 강남역, Times Square, Paris)">
+                <input list="recentCitiesList" type="text" class="search-input" id="searchInput" placeholder="도시, 주소, 장소명 검색 (예: 강남역, Times Square, Paris)">
+                <datalist id="recentCitiesList"></datalist>
                 <button class="icon-btn" onclick="getCurrentLocation()" id="locationBtn" title="내 현재 위치">
                     📍
                 </button>
@@ -887,6 +891,19 @@
                     <option value="10">10개</option>
                     <option value="20" selected>20개</option>
                 </select>
+            </div>
+
+            <div class="control-group">
+                <span class="control-label">키워드 검색</span>
+                <input id="customQuery" class="search-input" placeholder="예: 루프탑 바, 오마카세" style="width:220px;padding:8px 10px;font-size:12px">
+                <button class="radius-btn" onclick="handleCustomSearch()">검색</button>
+            </div>
+
+            <datalist id="recentQueriesList"></datalist>
+
+            <div class="control-group">
+                <button class="radius-btn" onclick="openCompareUI()">도시 비교</button>
+                <button class="radius-btn" onclick="openPlanner()">데이플래너</button>
             </div>
 
             <div class="control-group">
@@ -977,8 +994,19 @@
             attraction: [],
             restaurant: [],
             cafe: [],
-            lodging: []
+            lodging: [],
+            fine_dining: []
         };
+
+        // Recent searches / archives
+        let recentCities = JSON.parse(localStorage.getItem('recentCities_v1') || '[]');
+        let recentQueries = JSON.parse(localStorage.getItem('recentQueries_v1') || '[]');
+
+        // Planner state: array of days each with an array of place IDs
+        let planner = JSON.parse(localStorage.getItem('itinerary_v1') || JSON.stringify({ days: [ [] ] }));
+
+        // Distance Matrix cache (session) to reduce repeated requests: key = originLat,originLng|destLat,destLng
+        const distanceCache = {};
         let filteredPlaces = [];
         
         // 즐겨찾기: 전체 정보 저장 (ID만 저장하면 다른 도시에서 못 불러옴)
@@ -1132,6 +1160,9 @@
                         lng: location.lng
                     };
 
+                    // save recent city
+                    saveRecentCity(currentLocation.name, currentLocation.lat, currentLocation.lng);
+
                     updateMapCenter();
                     await searchAllCategories();
                 } else {
@@ -1179,6 +1210,9 @@
                     document.getElementById('searchInput').value = currentLocation.name;
                     hideLocationStatus();
                     document.getElementById('locationBtn').classList.remove('active');
+
+                    // save recent city
+                    saveRecentCity(currentLocation.name, currentLocation.lat, currentLocation.lng);
 
                     // show/update current location marker on the map
                     if (map) {
@@ -1247,12 +1281,13 @@
 
             try {
                 // 모든 카테고리 병렬 검색
-                const [allResults, attractionResults, restaurantResults, cafeResults, lodgingResults] = await Promise.all([
+                const [allResults, attractionResults, restaurantResults, cafeResults, lodgingResults, fineDiningResults] = await Promise.all([
                     searchPlacesByCategory('all', maxCount),
                     searchPlacesByCategory('attraction', maxCount),
                     searchPlacesByCategory('restaurant', maxCount),
                     searchPlacesByCategory('cafe', maxCount),
-                    searchPlacesByCategory('lodging', maxCount)
+                    searchPlacesByCategory('lodging', maxCount),
+                    searchPlacesByCategory('fine_dining', maxCount)
                 ]);
 
                 placesData.all = allResults;
@@ -1260,6 +1295,7 @@
                 placesData.restaurant = restaurantResults;
                 placesData.cafe = cafeResults;
                 placesData.lodging = lodgingResults;
+                placesData.fine_dining = fineDiningResults;
 
                 updateCategoryCounts();
                 applySortAndFilter();
@@ -1300,7 +1336,7 @@
                 headers: {
                     'Content-Type': 'application/json',
                     'X-Goog-Api-Key': API_KEY,
-                    'X-Goog-FieldMask': 'places.id,places.displayName,places.formattedAddress,places.rating,places.userRatingCount,places.priceLevel,places.types,places.photos,places.primaryType,places.location'
+                    'X-Goog-FieldMask': 'places.id,places.displayName,places.formattedAddress,places.rating,places.userRatingCount,places.priceLevel,places.types,places.photos,places.primaryType,places.location,places.openingHours,places.currentOpeningHours'
                 },
                 body: JSON.stringify(requestBody)
             });
@@ -1327,7 +1363,46 @@
             // Note: do NOT exclude 'point_of_interest'/'establishment' globally because many valid POIs use them.
             const excludeTypes = ['shopping_mall', 'department_store', 'store', 'lodging'];
 
-            if (includedTypes && includedTypes.length > 0) {
+            if (category === 'fine_dining') {
+                // For fine dining, use searchText endpoint semantics: query "fine dining [location]"
+                // Construct a query focused on fine dining in the location (city or place name)
+                const placeName = (currentLocation.name || '').split(',')[0] || '';
+                const queryText = `fine dining ${placeName}`.trim();
+
+                const textRequest = {
+                    query: queryText,
+                    locationRestriction: requestBody.locationRestriction,
+                    maxResultCount: requestBody.maxResultCount,
+                    rankPreference: 'RELEVANCE'
+                };
+
+                const textResp = await fetch('https://places.googleapis.com/v1/places:searchText', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-Goog-Api-Key': API_KEY,
+                        'X-Goog-FieldMask': 'places.id,places.displayName,places.formattedAddress,places.rating,places.userRatingCount,places.priceLevel,places.types,places.photos,places.primaryType,places.location,places.openingHours,places.currentOpeningHours'
+                    },
+                    body: JSON.stringify(textRequest)
+                });
+
+                if (!textResp.ok) {
+                    const err = await textResp.json();
+                    throw new Error(err.error?.message || 'Places searchText API error');
+                }
+
+                const textData = await textResp.json();
+                places = textData.places || [];
+                console.debug('[PlacesAPI] category=fine_dining rawCount=', places.length);
+
+                // Enforce price filter: only expensive / very_expensive allowed, exclude unknown price
+                places = places.filter(p => {
+                    const pl = p.priceLevel;
+                    return pl === 'PRICE_LEVEL_EXPENSIVE' || pl === 'PRICE_LEVEL_VERY_EXPENSIVE';
+                });
+                console.debug('[PlacesAPI] category=fine_dining afterFilterCount=', places.length);
+
+            } else if (includedTypes && includedTypes.length > 0) {
                 places = places.filter(p => {
                     // Keep if any of the place types match requested includedTypes
                     const ok = hasAnyType(p, includedTypes) || (p.primaryType && includedTypes.indexOf(p.primaryType) !== -1);
@@ -1403,10 +1478,8 @@
             document.getElementById('count-cafe').textContent = placesData.cafe.length;
             document.getElementById('count-lodging').textContent = placesData.lodging.length;
             // fine-dining count: use scoring function to better surface quality restaurants
-            document.getElementById('count-fine-dining').textContent = (placesData.restaurant || []).filter(p => {
-                const score = computeFineDiningScore(p);
-                return (p.rating || 0) >= 4.0 && ((p.userRatingCount || 0) >= 30 || score >= 5);
-            }).length;
+            // fine_dining count reflects the separate fine_dining search results (price-filtered)
+            document.getElementById('count-fine-dining').textContent = (placesData.fine_dining || []).length;
         }
 
         function updateFavoritesCount() {
@@ -1421,15 +1494,14 @@
             if (currentCategory === 'favorites') {
                 filteredPlaces = [...favorites];
             } else if (currentCategory === 'fine_dining') {
-                // 파인다이닝: use composite scoring to better surface true fine-dining
-                filteredPlaces = (placesData.restaurant || []).map(p => ({ place: p, score: computeFineDiningScore(p) }))
-                    .filter(item => {
-                        const p = item.place;
-                        // basic floor: reasonably high rating + some reviews OR strong composite score
-                        return (p.rating || 0) >= 4.0 && ((p.userRatingCount || 0) >= 30 || item.score >= 5);
-                    })
-                    .sort((a, b) => b.score - a.score)
-                    .map(i => i.place);
+                // 파인다이닝: use dedicated fine_dining search results (already price-filtered)
+                filteredPlaces = [...(placesData.fine_dining || [])];
+                // sort by rating desc, tie-breaker: price desc
+                filteredPlaces.sort((a, b) => {
+                    const r = (b.rating || 0) - (a.rating || 0);
+                    if (r !== 0) return r;
+                    return getPriceLevelNumber(b.priceLevel) - getPriceLevelNumber(a.priceLevel);
+                });
             } else {
                 filteredPlaces = [...(placesData[currentCategory] || [])];
             }
@@ -1442,6 +1514,8 @@
                     return level === targetPrice;
                 });
             }
+
+            // If on favorites tab, show note under address
 
             // 정렬
             filteredPlaces.sort((a, b) => {
@@ -1474,18 +1548,7 @@
             return mapping[priceLevel] ?? -1; // -1 for unknown
         }
 
-        // Compute a composite score for fine-dining ranking
-        function computeFineDiningScore(p) {
-            const rating = p.rating || 0; // 0..5
-            const reviews = Math.log10((p.userRatingCount || 0) + 1); // log-scale
-            const priceLevelNum = getPriceLevelNumber(p.priceLevel);
-            const priceScore = priceLevelNum >= 0 ? (Math.min(priceLevelNum, 4) / 4) : 0.5; // 0..1, unknown=0.5
-            const hasPhoto = (p.photos && p.photos.length) ? 1 : 0;
-
-            // Weights chosen to prefer higher rating, then review count, then price & photos
-            const score = (rating * 2.0) + (reviews * 1.5) + (priceScore * 1.2) + (hasPhoto * 0.8);
-            return score; // higher is better
-        }
+        
 
         // Render places
         function renderPlaces() {
@@ -1554,15 +1617,18 @@
                                 ? `<img src="${photoUrl}" alt="${place.displayName?.text || ''}" class="place-image" loading="lazy" onerror="this.parentElement.innerHTML='<div class=\\'no-image\\'>📍</div>'">`
                                 : `<div class="no-image">📍</div>`
                             }
-                            <div class="place-rank ${rankClass}">${index + 1}</div>
-                            <button class="favorite-btn ${isFavorite ? 'active' : ''}" onclick="event.stopPropagation(); toggleFavorite('${place.id}', this)" title="즐겨찾기">
-                                ${isFavorite ? '❤️' : '🤍'}
-                            </button>
+                                <div class="place-rank ${rankClass}">${index + 1}</div>
+                                <div style="position:absolute;right:8px;top:8px;background:rgba(0,0,0,0.6);color:white;padding:4px 8px;border-radius:8px;font-size:12px">${getOpenStatus(place).color} ${getOpenStatus(place).text}</div>
+                                    <button class="favorite-btn ${isFavorite ? 'active' : ''}" onclick="event.stopPropagation(); toggleFavorite('${place.id}', this)" title="즐겨찾기">
+                                        ${isFavorite ? '❤️' : '🤍'}
+                                    </button>
+                                    ${isFavorite ? `<button class="radius-btn" style="position:absolute;right:8px;bottom:8px;padding:6px;font-size:12px;" onclick="event.stopPropagation(); editFavoriteNote('${place.id}')">✏️ 메모</button>` : ''}
                             <div class="place-type-badge">${typeLabel}</div>
                         </div>
                         <div class="place-content">
                             <h3 class="place-name">${place.displayName?.text || '이름 없음'}</h3>
-                            <p class="place-address">${place.formattedAddress || '주소 정보 없음'}</p>
+                                        <p class="place-address">${place.formattedAddress || '주소 정보 없음'}</p>
+                                        ${isFavorite && (place.note || '') ? `<p style="color:var(--text-secondary);font-size:12px;margin-top:6px">메모: ${place.note}</p>` : ''}
                             <div class="place-stats">
                                 <div class="stat">
                                     <span class="stat-icon">💬</span>
@@ -1586,6 +1652,38 @@
         function getPhotoUrl(place) {
             if (!place.photos || !place.photos[0]?.name) return null;
             return `https://places.googleapis.com/v1/${place.photos[0].name}/media?maxHeightPx=400&maxWidthPx=400&key=${API_KEY}`;
+        }
+
+        // Determine open status badge text and color
+        function getOpenStatus(place) {
+            try {
+                // prefer currentOpeningHours if available
+                const cur = place.currentOpeningHours;
+                if (cur && typeof cur.openNow === 'boolean') {
+                    // check for nextClose or nextUpdateTime to determine "곧 마감"
+                    if (cur.openNow) {
+                        // if nextClose provided as ISO string, compute minutes left
+                        const nextClose = cur.nextClose || cur.nextClosingTime || cur.nextCloseTime;
+                        if (nextClose) {
+                            const ms = Date.parse(nextClose) - Date.now();
+                            const mins = Math.round(ms / 60000);
+                            if (mins > 0 && mins <= 60) return { text: `곧 마감 (${mins}분)`, color: '🟡' };
+                        }
+                        return { text: '영업 중', color: '🟢' };
+                    }
+                    return { text: '영업 종료', color: '🔴' };
+                }
+
+                // fallback to openingHours with simple flags
+                const oh = place.openingHours;
+                if (oh && typeof oh.openNow === 'boolean') {
+                    if (oh.openNow) return { text: '영업 중', color: '🟢' };
+                    return { text: '영업 종료', color: '🔴' };
+                }
+            } catch (e) {
+                // ignore
+            }
+            return { text: '영업 정보 없음', color: '⚪' };
         }
 
         function getTypeLabel(types) {
@@ -1742,7 +1840,8 @@
                 }
                 
                 if (place) {
-                    favorites.push({ ...place }); // Store full data
+                    const toSave = { ...place, note: '' };
+                    favorites.push(toSave); // Store full data; editing via editFavoriteNote()
                 }
             } else {
                 favorites.splice(existingIndex, 1);
@@ -1762,6 +1861,19 @@
             if (currentCategory === 'favorites') {
                 applySortAndFilter();
             }
+        }
+
+        function editFavoriteNote(placeId) {
+            const idx = favorites.findIndex(f => f.id === placeId);
+            if (idx === -1) return alert('즐겨찾기 항목을 찾을 수 없습니다');
+            const current = favorites[idx].note || '';
+            const updated = prompt('즐겨찾기 메모 편집:', current);
+            if (updated === null) return; // cancel
+            favorites[idx].note = updated.slice(0, 200);
+            localStorage.setItem('favorites_v2', JSON.stringify(favorites));
+            if (currentCategory === 'favorites') applySortAndFilter();
+            // also re-render cards to show note
+            renderPlaces();
         }
 
         // Controls
@@ -1814,6 +1926,366 @@
                 btn.classList.toggle('active', btn.dataset.category === category);
             });
             applySortAndFilter();
+        }
+
+        // Recent cities helpers
+        function saveRecentCity(name, lat, lng) {
+            if (!name) return;
+            // keep unique, most-recent-first, max 12
+            recentCities = recentCities.filter(c => c.name !== name);
+            recentCities.unshift({ name, lat, lng, ts: Date.now() });
+            if (recentCities.length > 12) recentCities.length = 12;
+            localStorage.setItem('recentCities_v1', JSON.stringify(recentCities));
+            populateRecentCitiesDatalist();
+        }
+
+        function populateRecentCitiesDatalist() {
+            const dl = document.getElementById('recentCitiesList');
+            if (!dl) return;
+            dl.innerHTML = recentCities.map(c => `<option value="${c.name}"></option>`).join('');
+        }
+
+        populateRecentCitiesDatalist();
+
+        function populateRecentQueriesDatalist() {
+            const dl = document.getElementById('recentQueriesList');
+            if (!dl) return;
+            dl.innerHTML = recentQueries.map(q => `<option value="${q}"></option>`).join('');
+        }
+
+        populateRecentQueriesDatalist();
+
+        // Custom text search
+        async function handleCustomSearch() {
+            const q = document.getElementById('customQuery').value.trim();
+            if (!q) return alert('검색어를 입력하세요.');
+            setLoading(true);
+            try {
+                // save recent query (unique, most recent first)
+                recentQueries = recentQueries.filter(x => x !== q);
+                recentQueries.unshift(q);
+                if (recentQueries.length > 12) recentQueries.length = 12;
+                localStorage.setItem('recentQueries_v1', JSON.stringify(recentQueries));
+                populateRecentQueriesDatalist();
+                const maxCount = parseInt(document.getElementById('countSelect').value);
+                const data = await searchPlacesByTextQuery(q, maxCount);
+                // put results into a temporary category and render
+                placesData.all = data;
+                currentCategory = 'all';
+                updateCategoryCounts();
+                applySortAndFilter();
+            } catch (e) {
+                console.error(e);
+                showError(e.message);
+            } finally {
+                setLoading(false);
+            }
+        }
+
+        async function searchPlacesByTextQuery(query, maxCount) {
+            const request = {
+                query: query,
+                locationRestriction: {
+                    circle: {
+                        center: { latitude: currentLocation.lat, longitude: currentLocation.lng },
+                        radius: currentRadius
+                    }
+                },
+                maxResultCount: Math.min(maxCount, 20),
+                rankPreference: 'RELEVANCE'
+            };
+
+            const resp = await fetch('https://places.googleapis.com/v1/places:searchText', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-Goog-Api-Key': API_KEY,
+                    'X-Goog-FieldMask': 'places.id,places.displayName,places.formattedAddress,places.rating,places.userRatingCount,places.priceLevel,places.types,places.photos,places.primaryType,places.location,places.openingHours,places.currentOpeningHours'
+                },
+                body: JSON.stringify(request)
+            });
+
+            if (!resp.ok) {
+                const j = await resp.json();
+                throw new Error(j.error?.message || 'Text search failed');
+            }
+            const j = await resp.json();
+            return j.places || [];
+        }
+
+        // Compare UI (simple): prompt for second city, run fine_dining text search for both and show counts
+        async function openCompareUI() {
+            const cityA = document.getElementById('searchInput').value.trim();
+            if (!cityA) return alert('비교할 첫 도시를 검색 입력하세요');
+            const cityB = prompt('비교할 두번째 도시를 입력하세요 (예: Tokyo)');
+            if (!cityB) return;
+            setLoading(true);
+            try {
+                const coordsA = { lat: currentLocation.lat, lng: currentLocation.lng };
+                // geocode B
+                const geo = await fetch(`https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(cityB)}&key=${API_KEY}`);
+                const geoJ = await geo.json();
+                if (geoJ.status !== 'OK' || !geoJ.results.length) throw new Error('두번째 도시를 찾을 수 없습니다');
+                const locB = geoJ.results[0].geometry.location;
+
+                // run fine dining text search for both
+                const fdA = await searchPlacesByTextQuery(`fine dining ${cityA}`, 20);
+                const fdB = await searchPlacesByTextQuery(`fine dining ${cityB}`, 20);
+
+                // prepare simple stats
+                const statsA = summarizePlaces(fdA);
+                const statsB = summarizePlaces(fdB);
+
+                // keep last results for CSV/export
+                window._lastCompareA = fdA;
+                window._lastCompareB = fdB;
+                showCompareOverlay(cityA, statsA, cityB, statsB, fdA, fdB);
+            } catch (e) {
+                console.error(e);
+                alert(e.message || '비교 실패');
+            } finally {
+                setLoading(false);
+            }
+        }
+
+        function summarizePlaces(list) {
+            const count = list.length;
+            const avgRating = (list.reduce((s,p)=>s+(p.rating||0),0) / Math.max(1, count)).toFixed(2);
+            return { count, avgRating };
+        }
+
+        function showCompareOverlay(aName, aStats, bName, bStats, listA = [], listB = []) {
+            const overlayId = 'compareOverlay';
+            let ol = document.getElementById(overlayId);
+            if (!ol) {
+                ol = document.createElement('div');
+                ol.id = overlayId;
+                ol.style.position = 'fixed';
+                ol.style.left = '10%';
+                ol.style.top = '10%';
+                ol.style.width = '80%';
+                ol.style.height = '80%';
+                ol.style.background = 'var(--bg-card)';
+                ol.style.border = '1px solid var(--border)';
+                ol.style.zIndex = 2000;
+                ol.style.padding = '16px';
+                ol.style.overflow = 'auto';
+                document.body.appendChild(ol);
+            }
+            // top lists and CSV export
+            const topA = (listA || []).slice(0,10).map(p=>p.displayName?.text||p.name||'이름').join('\n');
+            const topB = (listB || []).slice(0,10).map(p=>p.displayName?.text||p.name||'이름').join('\n');
+            ol.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px"><h3>도시 비교</h3><div><button onclick="downloadCompareCSV('${encodeURIComponent(aName)}','${encodeURIComponent(bName)}')" class="radius-btn">CSV 내보내기</button> <button onclick="document.getElementById('compareOverlay').remove()">닫기</button></div></div>
+                <div style="display:flex;gap:12px">
+                    <div style="flex:1;padding:12px;border:1px solid var(--border);border-radius:8px">
+                        <h4>${aName}</h4>
+                        <p>파인다이닝 수: <strong>${aStats.count}</strong></p>
+                        <p>평균 평점: <strong>${aStats.avgRating}</strong></p>
+                        <pre style="white-space:pre-wrap;margin-top:8px;max-height:300px;overflow:auto">${topA}</pre>
+                    </div>
+                    <div style="flex:1;padding:12px;border:1px solid var(--border);border-radius:8px">
+                        <h4>${bName}</h4>
+                        <p>파인다이닝 수: <strong>${bStats.count}</strong></p>
+                        <p>평균 평점: <strong>${bStats.avgRating}</strong></p>
+                        <pre style="white-space:pre-wrap;margin-top:8px;max-height:300px;overflow:auto">${topB}</pre>
+                    </div>
+                </div>`;
+        }
+
+        function downloadCompareCSV(aName, bName) {
+            // retrieve lists from last compare call by reading fd results previously stored as globals (if any)
+            // we'll use placesData.fine_dining as fallback for left side
+            const listA = window._lastCompareA || placesData.fine_dining || [];
+            const listB = window._lastCompareB || [];
+            const rows = [];
+            const max = Math.max(listA.length, listB.length);
+            for (let i=0;i<max;i++) {
+                const a = listA[i];
+                const b = listB[i];
+                rows.push([a ? (a.displayName?.text||a.name) : '', a ? (a.formattedAddress||'') : '', b ? (b.displayName?.text||b.name) : '', b ? (b.formattedAddress||'') : '']);
+            }
+            let csv = `"${decodeURIComponent(aName)} - ${decodeURIComponent(bName)} 비교"\n"A 이름","A 주소","B 이름","B 주소"\n`;
+            rows.forEach(r=> { csv += `${r.map(c=>`"${(c||'').replace(/"/g,'""') }"`).join(',')}\n`; });
+            const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a'); a.href = url; a.download = 'compare.csv'; a.click(); URL.revokeObjectURL(url);
+        }
+
+        // Planner UI
+        function openPlanner() {
+            const id = 'plannerPanel';
+            if (document.getElementById(id)) return; // already open
+            const p = document.createElement('div');
+            p.id = id;
+            p.style.position = 'fixed';
+            p.style.right = '12px';
+            p.style.bottom = '12px';
+            p.style.width = '420px';
+            p.style.height = '520px';
+            p.style.background = 'var(--bg-card)';
+            p.style.border = '1px solid var(--border)';
+            p.style.zIndex = 2000;
+            p.style.padding = '12px';
+            p.style.overflow = 'auto';
+
+            p.innerHTML = `
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+                    <h4>데이 플래너</h4>
+                    <div>
+                        <button onclick="addPlannerDay()" class="radius-btn">일 추가</button>
+                        <button onclick="closePlanner()" class="radius-btn">닫기</button>
+                    </div>
+                </div>
+                <div id="plannerDaysContainer"></div>
+            `;
+            document.body.appendChild(p);
+            renderPlanner();
+        }
+
+        function closePlanner() { const el = document.getElementById('plannerPanel'); if (el) el.remove(); }
+
+        function addPlannerDay() { planner.days.push([]); savePlanner(); renderPlanner(); }
+
+        function savePlanner() { localStorage.setItem('itinerary_v1', JSON.stringify(planner)); }
+
+        function renderPlanner() {
+            const cont = document.getElementById('plannerDaysContainer');
+            cont.innerHTML = '';
+            planner.days.forEach((day, idx) => {
+                const div = document.createElement('div');
+                div.style.border = '1px solid var(--border)';
+                div.style.padding = '8px';
+                div.style.marginBottom = '8px';
+                div.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px"><strong>Day ${idx+1}</strong><div><button onclick="computePlannerDay(${idx})" class="radius-btn">시간계산</button><button onclick="planner.days.splice(${idx},1); savePlanner(); renderPlanner();" class="radius-btn">삭제</button></div></div><div id="day-${idx}" style="min-height:60px;padding:6px;border-radius:6px;background:var(--bg-hover)"></div><div id="day-${idx}-meta" style="margin-top:6px;color:var(--text-secondary)"></div>`;
+                cont.appendChild(div);
+
+                const drop = div.querySelector(`#day-${idx}`);
+                drop.ondragover = (e) => e.preventDefault();
+                drop.ondrop = (e) => {
+                    e.preventDefault();
+                    const pid = e.dataTransfer.getData('text/plain');
+                    if (!pid) return;
+                    // find place object from placesData or favorites
+                    let place = null;
+                    for (const col of Object.values(placesData)) { place = col.find(p=>p.id===pid); if (place) break; }
+                    if (!place) place = favorites.find(f=>f.id===pid);
+                    if (!place) return;
+                        // if drop target is a timeslot, assign to specific slot
+                        const slotEl = e.target.closest('[data-slot-index]');
+                        if (slotEl) {
+                            const slotIndex = parseInt(slotEl.dataset.slotIndex);
+                            planner.days[idx][slotIndex] = place.id; // assign to slot
+                        } else {
+                            planner.days[idx].push(place.id);
+                        }
+                        savePlanner();
+                        renderPlanner();
+                };
+
+                // render items as time slots (09:00-17:00, 9 slots)
+                const listEl = div.querySelector(`#day-${idx}`);
+                listEl.innerHTML = '';
+                if (!Array.isArray(planner.days[idx]) || planner.days[idx].length === 0) {
+                    planner.days[idx] = Array(9).fill(null);
+                }
+                const startHour = 9;
+                for (let slotIndex = 0; slotIndex < planner.days[idx].length; slotIndex++) {
+                    const slotDiv = document.createElement('div');
+                    slotDiv.dataset.slotIndex = slotIndex;
+                    slotDiv.style.padding = '6px';
+                    slotDiv.style.marginBottom = '6px';
+                    slotDiv.style.border = '1px dashed var(--border)';
+                    slotDiv.style.minHeight = '48px';
+                    slotDiv.style.display = 'flex';
+                    slotDiv.style.alignItems = 'center';
+                    slotDiv.style.gap = '8px';
+                    slotDiv.ondragover = (e) => e.preventDefault();
+                    slotDiv.ondrop = (e) => {
+                        e.preventDefault();
+                        const pid = e.dataTransfer.getData('text/plain');
+                        if (!pid) return;
+                        let place = null;
+                        for (const col of Object.values(placesData)) { place = col.find(p=>p.id===pid); if (place) break; }
+                        if (!place) place = favorites.find(f=>f.id===pid);
+                        if (!place) return;
+                        planner.days[idx][slotIndex] = place.id;
+                        savePlanner(); renderPlanner();
+                    };
+
+                    const timeLabel = document.createElement('div');
+                    timeLabel.style.width = '64px';
+                    timeLabel.style.fontSize = '12px';
+                    timeLabel.style.color = 'var(--text-secondary)';
+                    timeLabel.textContent = `${(startHour + slotIndex).toString().padStart(2,'0')}:00`;
+                    slotDiv.appendChild(timeLabel);
+
+                    const pid = planner.days[idx][slotIndex];
+                    if (pid) {
+                        let place = null;
+                        for (const col of Object.values(placesData)) { place = col.find(p=>p.id===pid); if (place) break; }
+                        if (!place) place = favorites.find(f=>f.id===pid);
+                        if (place) {
+                            const item = document.createElement('div');
+                            item.style.flex = '1';
+                            item.style.padding = '6px';
+                            item.style.background = 'var(--bg-card)';
+                            item.style.border = '1px solid var(--border)';
+                            item.draggable = true;
+                            item.ondragstart = (ev)=> { ev.dataTransfer.setData('text/plain', pid); };
+                            item.innerHTML = `<strong style="font-size:13px">${place.displayName?.text||place.name||'이름'}</strong><div style="font-size:12px;color:var(--text-secondary)">${place.formattedAddress||''}</div>`;
+                            const del = document.createElement('button'); del.textContent='삭제'; del.className='radius-btn'; del.style.marginLeft='8px'; del.onclick=()=>{ planner.days[idx][slotIndex]=null; savePlanner(); renderPlanner(); };
+                            item.appendChild(del);
+                            slotDiv.appendChild(item);
+                        }
+                    } else {
+                        const hint = document.createElement('div');
+                        hint.style.flex = '1';
+                        hint.style.color = 'var(--text-muted)';
+                        hint.textContent = '드래그하여 장소 추가';
+                        slotDiv.appendChild(hint);
+                    }
+
+                    listEl.appendChild(slotDiv);
+                }
+            });
+        }
+
+        async function computePlannerDay(idx) {
+            const ids = planner.days[idx];
+            if (!ids || ids.length < 2) return alert('두 개 이상의 장소가 필요합니다');
+            // build sequential legs
+            const stops = ids.map(id => {
+                let place = null;
+                for (const col of Object.values(placesData)) { place = col.find(p=>p.id===id); if (place) break; }
+                if (!place) place = favorites.find(f=>f.id===id);
+                return place;
+            }).filter(Boolean);
+
+            let totalMeters = 0; let totalSeconds = 0;
+            for (let i=0;i<stops.length-1;i++) {
+                const a = stops[i].location; const b = stops[i+1].location;
+                if (!a || !b) continue;
+                try {
+                    const key = `${a.latitude},${a.longitude}|${b.latitude},${b.longitude}`;
+                    if (distanceCache[key]) {
+                        totalMeters += distanceCache[key].distance || 0;
+                        totalSeconds += distanceCache[key].duration || 0;
+                    } else {
+                        const dm = await fetch(`https://maps.googleapis.com/maps/api/distancematrix/json?origins=${a.latitude},${a.longitude}&destinations=${b.latitude},${b.longitude}&mode=driving&key=${API_KEY}`);
+                        const jm = await dm.json();
+                        const el = jm.rows?.[0]?.elements?.[0];
+                        if (el && el.status === 'OK') {
+                            const d = el.distance?.value || 0;
+                            const t = el.duration?.value || 0;
+                            distanceCache[key] = { distance: d, duration: t };
+                            totalMeters += d;
+                            totalSeconds += t;
+                        }
+                    }
+                } catch (e) { console.warn('DistanceMatrix failed', e); }
+            }
+            const meta = document.getElementById(`day-${idx}-meta`);
+            if (meta) meta.textContent = `총 이동거리: ${Math.round(totalMeters/1000*10)/10} km · 예상 소요시간: ${Math.round(totalSeconds/60)} 분`;
         }
 
         function togglePrice(price) {
