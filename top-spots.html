@@ -1995,6 +1995,7 @@
         // Controls
         async function setRadius(radius) {
             currentRadius = radius;
+            syncRadiusUI(radius);
             document.querySelectorAll('.radius-btn').forEach(btn => {
                 btn.classList.toggle('active', parseInt(btn.dataset.radius) === radius);
             });
@@ -2005,7 +2006,7 @@
             }
 
             // Clear previous results to avoid showing stale data while new search runs
-            placesData = { all: [], attraction: [], restaurant: [], cafe: [] };
+            placesData = { all: [], attraction: [], restaurant: [], cafe: [], lodging: [], fine_dining: [] };
             updateCategoryCounts();
             showSkeletonLoading();
 
