@@ -956,6 +956,9 @@
         <span id="locationStatusText">위치를 가져오는 중...</span>
     </div>
 
+    <!-- keys.js must load before main script so API_KEY is available -->
+    <script src="keys.js"></script>
+
     <script>
         // Load browser API key from external, non-committed file `keys.js`.
         // Create `keys.js` locally with: window.APP_KEYS = { BROWSER_KEY: 'YOUR_BROWSER_KEY' };
@@ -1721,8 +1724,7 @@
         });
     </script>
 
-    <!-- Load keys (local, ignored) and then load Google Maps with that browser key -->
-    <script src="keys.js"></script>
+    <!-- Load Google Maps with the browser key from keys.js (already loaded above) -->
     <script>
         (function loadMaps() {
             if (!window.APP_KEYS?.BROWSER_KEY) {
