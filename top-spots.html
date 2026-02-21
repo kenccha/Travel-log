@@ -866,7 +866,7 @@
                     <button class="radius-btn" data-radius="50000" onclick="setRadius(50000)">50km</button>
                 </div>
                 <div style="display:flex;align-items:center;gap:8px;margin-left:12px;">
-                    <input id="radiusRange" type="range" min="5000" max="50000" step="5000" value="15000" style="width:160px">
+                    <input id="radiusRange" type="range" min="0" max="9" step="1" value="6" style="width:160px">
                     <span id="radiusValue" style="min-width:48px;text-align:right;color:var(--text-secondary);font-size:13px">15km</span>
                 </div>
             </div>
@@ -1018,6 +1018,9 @@
             50000: 10
         };
 
+        // Discrete radius steps (meters) from very narrow to very wide
+        const radiusSteps = [500, 1000, 2000, 3000, 5000, 10000, 15000, 20000, 30000, 50000];
+
         // Initialize Map
         function initMap() {
             try {
@@ -1033,20 +1036,24 @@
                 });
                 infoWindow = new google.maps.InfoWindow();
                 updateFavoritesCount();
-                // attach wheel listener to map container to adjust search radius by scroll
+                    // attach wheel listener to map container to adjust search radius by scroll
                 const mapEl = document.getElementById('map');
                 if (mapEl) {
                     mapEl.addEventListener('wheel', (e) => {
                         // prevent page scroll when over map
                         e.preventDefault();
-                        const step = 5000;
+                        // change radius by one index in radiusSteps
+                        const curIndex = radiusSteps.findIndex(r => r === currentRadius);
+                        const index = curIndex === -1 ? radiusSteps.findIndex(r => r >= currentRadius) : curIndex;
                         if (e.deltaY < 0) {
-                            // scroll up -> increase radius
-                            const next = Math.min(currentRadius + step, 50000);
+                            // scroll up -> wider
+                            const nextIndex = Math.min((index === -1 ? 0 : index) + 1, radiusSteps.length - 1);
+                            const next = radiusSteps[nextIndex];
                             if (next !== currentRadius) setRadius(next);
                         } else {
-                            // scroll down -> decrease radius
-                            const next = Math.max(currentRadius - step, 5000);
+                            // scroll down -> narrower
+                            const nextIndex = Math.max((index === -1 ? 0 : index) - 1, 0);
+                            const next = radiusSteps[nextIndex];
                             if (next !== currentRadius) setRadius(next);
                         }
                     }, { passive: false });
@@ -1763,8 +1770,17 @@
         function syncRadiusUI(radius) {
             const range = document.getElementById('radiusRange');
             const val = document.getElementById('radiusValue');
-            if (range) range.value = radius;
-            if (val) val.textContent = (radius / 1000) + 'km';
+            // find nearest index for given radius
+            let index = radiusSteps.findIndex(r => r === radius);
+            if (index === -1) {
+                index = radiusSteps.findIndex(r => r >= radius);
+                if (index === -1) index = radiusSteps.length - 1;
+            }
+            if (range) range.value = index;
+            if (val) {
+                const r = radiusSteps[index];
+                val.textContent = r >= 1000 ? (r / 1000) + 'km' : r + 'm';
+            }
         }
 
         function setCategory(category) {
@@ -1812,12 +1828,15 @@
         const radiusRangeEl = document.getElementById('radiusRange');
         if (radiusRangeEl) {
             radiusRangeEl.addEventListener('input', (e) => {
-                const v = parseInt(e.target.value);
-                syncRadiusUI(v);
+                const idx = parseInt(e.target.value);
+                const r = radiusSteps[idx] || currentRadius;
+                const val = document.getElementById('radiusValue');
+                if (val) val.textContent = r >= 1000 ? (r / 1000) + 'km' : r + 'm';
             });
             radiusRangeEl.addEventListener('change', (e) => {
-                const v = parseInt(e.target.value);
-                setRadius(v);
+                const idx = parseInt(e.target.value);
+                const r = radiusSteps[idx] || currentRadius;
+                setRadius(r);
             });
             // initialize label
             syncRadiusUI(currentRadius);
