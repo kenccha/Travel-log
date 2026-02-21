@@ -1398,8 +1398,7 @@
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
-                    'X-Goog-Api-Key': API_KEY,
-                    'X-Goog-FieldMask': 'places.id,places.displayName,places.formattedAddress,places.rating,places.userRatingCount,places.priceLevel,places.types,places.photos,places.primaryType,places.location'
+                    'X-Goog-Api-Key': API_KEY
                 },
                 body: JSON.stringify(requestBody)
             });
@@ -1442,10 +1441,9 @@
                 const textResp = await fetch('https://places.googleapis.com/v1/places:searchText', {
                     method: 'POST',
                     headers: {
-                            'Content-Type': 'application/json',
-                            'X-Goog-Api-Key': API_KEY,
-                            'X-Goog-FieldMask': 'places.id,places.displayName,places.formattedAddress,places.rating,places.userRatingCount,places.priceLevel,places.types,places.photos,places.primaryType,places.location'
-                        },
+                        'Content-Type': 'application/json',
+                        'X-Goog-Api-Key': API_KEY
+                    },
                     body: JSON.stringify(textRequest)
                 });
 
