@@ -865,6 +865,10 @@
                     <button class="radius-btn" data-radius="30000" onclick="setRadius(30000)">30km</button>
                     <button class="radius-btn" data-radius="50000" onclick="setRadius(50000)">50km</button>
                 </div>
+                <div style="display:flex;align-items:center;gap:8px;margin-left:12px;">
+                    <input id="radiusRange" type="range" min="5000" max="50000" step="5000" value="15000" style="width:160px">
+                    <span id="radiusValue" style="min-width:48px;text-align:right;color:var(--text-secondary);font-size:13px">15km</span>
+                </div>
             </div>
 
             <div class="control-group">
@@ -1029,6 +1033,24 @@
                 });
                 infoWindow = new google.maps.InfoWindow();
                 updateFavoritesCount();
+                // attach wheel listener to map container to adjust search radius by scroll
+                const mapEl = document.getElementById('map');
+                if (mapEl) {
+                    mapEl.addEventListener('wheel', (e) => {
+                        // prevent page scroll when over map
+                        e.preventDefault();
+                        const step = 5000;
+                        if (e.deltaY < 0) {
+                            // scroll up -> increase radius
+                            const next = Math.min(currentRadius + step, 50000);
+                            if (next !== currentRadius) setRadius(next);
+                        } else {
+                            // scroll down -> decrease radius
+                            const next = Math.max(currentRadius - step, 5000);
+                            if (next !== currentRadius) setRadius(next);
+                        }
+                    }, { passive: false });
+                }
             } catch(e) {
                 console.error('Map init error:', e);
                 document.getElementById('map').innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:#ef4444;font-size:13px;padding:20px;text-align:center">⚠️ 지도를 불러올 수 없습니다.<br>' + e.message + '</div>';
@@ -1737,6 +1759,14 @@
             }
         }
 
+        // keep UI (range input and label) in sync with currentRadius
+        function syncRadiusUI(radius) {
+            const range = document.getElementById('radiusRange');
+            const val = document.getElementById('radiusValue');
+            if (range) range.value = radius;
+            if (val) val.textContent = (radius / 1000) + 'km';
+        }
+
         function setCategory(category) {
             currentCategory = category;
             document.querySelectorAll('.tab-btn').forEach(btn => {
@@ -1777,6 +1807,21 @@
                 handleSearch();
             }
         });
+
+        // Radius range control binding
+        const radiusRangeEl = document.getElementById('radiusRange');
+        if (radiusRangeEl) {
+            radiusRangeEl.addEventListener('input', (e) => {
+                const v = parseInt(e.target.value);
+                syncRadiusUI(v);
+            });
+            radiusRangeEl.addEventListener('change', (e) => {
+                const v = parseInt(e.target.value);
+                setRadius(v);
+            });
+            // initialize label
+            syncRadiusUI(currentRadius);
+        }
     </script>
 
     <script
