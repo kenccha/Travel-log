@@ -978,6 +978,89 @@
     </div>
 
     <script src="keys.js"></script>
+    <script type="module">
+        // Firebase Auth (modular SDK) - dynamic imports to allow version variable
+        const FIREBASE_SDK_VERSION = '9.22.2';
+
+        const firebaseConfig = window.FIREBASE_CONFIG || {
+            apiKey: "REPLACE_WITH_FIREBASE_API_KEY",
+            authDomain: "REPLACE_WITH_PROJECT.firebaseapp.com",
+            projectId: "REPLACE_WITH_PROJECT_ID",
+        };
+
+        let firebaseApp = null;
+        let auth = null;
+
+        function updateAuthUI(user) {
+            const btn = document.getElementById('authButton');
+            if (!btn) return;
+            if (user) {
+                const name = user.displayName || user.email || 'User';
+                btn.textContent = `Sign out (${name})`;
+                btn.dataset.signedIn = '1';
+            } else {
+                btn.textContent = 'Sign in with Google';
+                btn.dataset.signedIn = '0';
+            }
+        }
+
+        function insertAuthButton() {
+            const header = document.querySelector('header');
+            if (!header) return;
+            if (document.getElementById('authContainer')) return;
+            const container = document.createElement('div');
+            container.id = 'authContainer';
+            container.style.display = 'flex';
+            container.style.alignItems = 'center';
+            container.style.gap = '8px';
+            container.style.marginLeft = '12px';
+            const btn = document.createElement('button');
+            btn.id = 'authButton';
+            btn.className = 'radius-btn';
+            btn.textContent = 'Sign in with Google';
+            btn.onclick = () => {
+                if (btn.dataset.signedIn === '1') {
+                    signOutFirebase();
+                } else {
+                    signInWithGoogle();
+                }
+            };
+            container.appendChild(btn);
+            header.appendChild(container);
+        }
+
+        async function initFirebase() {
+            try {
+                const appModule = await import(`https://www.gstatic.com/firebasejs/${FIREBASE_SDK_VERSION}/firebase-app.js`);
+                const authModule = await import(`https://www.gstatic.com/firebasejs/${FIREBASE_SDK_VERSION}/firebase-auth.js`);
+                const { initializeApp } = appModule;
+                const { getAuth, signInWithPopup, GoogleAuthProvider, signOut, onAuthStateChanged } = authModule;
+
+                firebaseApp = initializeApp(firebaseConfig);
+                auth = getAuth(firebaseApp);
+                onAuthStateChanged(auth, (user) => {
+                    updateAuthUI(user);
+                });
+                insertAuthButton();
+
+                // Expose selected functions
+                window.firebaseAuth = {
+                    initFirebase,
+                    signInWithGoogle: () => {
+                        const provider = new GoogleAuthProvider();
+                        return signInWithPopup(auth, provider).catch(err => console.warn('Sign-in failed', err));
+                    },
+                    signOutFirebase: () => signOut(auth).catch(err => console.warn('Sign-out failed', err)),
+                    getCurrentUser: () => (auth ? auth.currentUser : null)
+                };
+            } catch (e) {
+                console.warn('Firebase init failed:', e);
+            }
+        }
+
+        // Auto-init so the UI is available if config is present
+        setTimeout(() => { void initFirebase(); }, 50);
+    </script>
     <script>
         const API_KEY = (window.APP_KEYS && window.APP_KEYS.BROWSER_KEY) || '';
         
