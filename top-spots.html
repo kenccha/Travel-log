@@ -177,6 +177,8 @@
             display: flex;
             align-items: center;
             gap: 8px;
+            flex-shrink: 0;
+            margin-left: auto;
         }
 
         /* Controls Bar */
@@ -901,7 +903,6 @@
             <datalist id="recentQueriesList"></datalist>
 
             <div class="control-group">
-                <button class="radius-btn" onclick="openCompareUI()">도시 비교</button>
                 <button class="radius-btn" onclick="openPlanner()">데이플래너</button>
             </div>
 
@@ -1428,7 +1429,7 @@
 
             // Exclude obvious non-matching POI types that frequently pollute restaurant results
             // Note: do NOT exclude 'point_of_interest'/'establishment' globally because many valid POIs use them.
-            const excludeTypes = ['shopping_mall', 'department_store', 'store', 'lodging'];
+            const excludeTypes = ['shopping_mall', 'department_store', 'store'];
 
             if (includedTypes && includedTypes.length > 0) {
                 places = places.filter(p => {
@@ -1493,9 +1494,9 @@
             const data = await response.json();
             let places = data.places || [];
 
-            // $$$ / $$$$ 만 허용, 가격 정보 없으면 제외
-            const allowedPriceLevels = ['PRICE_LEVEL_EXPENSIVE', 'PRICE_LEVEL_VERY_EXPENSIVE'];
-            places = places.filter(p => p.priceLevel && allowedPriceLevels.includes(p.priceLevel));
+            // $$$ / $$$$ 우선, 가격 정보 없는 곳도 포함 (무료·저렴한 곳만 제외)
+            const excludePriceLevels = ['PRICE_LEVEL_FREE', 'PRICE_LEVEL_INEXPENSIVE'];
+            places = places.filter(p => !p.priceLevel || !excludePriceLevels.includes(p.priceLevel));
 
             // 별점 내림차순, 동점이면 가격 높은 순
             places.sort((a, b) => {
@@ -1698,9 +1699,11 @@
                 const open = getOpenStatus(place);
 
                 return `
-                    <div class="place-card fade-in" 
+                    <div class="place-card fade-in"
                          style="animation-delay: ${index * 0.03}s"
                          data-place-id="${place.id}"
+                         draggable="true"
+                         ondragstart="event.dataTransfer.setData('text/plain', '${place.id}')"
                          onmouseenter="highlightMarker('${place.id}')"
                          onmouseleave="unhighlightMarker('${place.id}')"
                          onclick="openGoogleMaps('${encodeURIComponent(place.displayName?.text || '')}', ${place.location?.latitude || 0}, ${place.location?.longitude || 0}, '${place.id || ''}')">
@@ -2088,7 +2091,7 @@
         async function searchPlacesByTextQuery(query, maxCount) {
             const request = {
                 textQuery: query,
-                locationRestriction: {
+                locationBias: {
                     circle: {
                         center: { latitude: currentLocation.lat, longitude: currentLocation.lng },
                         radius: currentRadius
@@ -2114,103 +2117,6 @@
             }
             const j = await resp.json();
             return j.places || [];
-        }
-
-        // Compare UI (simple): prompt for second city, run fine_dining text search for both and show counts
-        async function openCompareUI() {
-            const cityA = document.getElementById('searchInput').value.trim();
-            if (!cityA) return alert('비교할 첫 도시를 검색 입력하세요');
-            const cityB = prompt('비교할 두번째 도시를 입력하세요 (예: Tokyo)');
-            if (!cityB) return;
-            setLoading(true);
-            try {
-                // geocode B
-                const geo = await fetch(`https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(cityB)}&key=${API_KEY}`);
-                const geoJ = await geo.json();
-                if (geoJ.status !== 'OK' || !geoJ.results.length) throw new Error('두번째 도시를 찾을 수 없습니다');
-                const locB = geoJ.results[0].geometry.location;
-
-                // run fine dining text search for both
-                const fdA = await searchPlacesByTextQuery(`fine dining ${cityA}`, 20);
-                const fdB = await searchPlacesByTextQuery(`fine dining ${cityB}`, 20);
-
-                // prepare simple stats
-                const statsA = summarizePlaces(fdA);
-                const statsB = summarizePlaces(fdB);
-
-                // keep last results for CSV/export
-                window._lastCompareA = fdA;
-                window._lastCompareB = fdB;
-                showCompareOverlay(cityA, statsA, cityB, statsB, fdA, fdB);
-            } catch (e) {
-                console.error(e);
-                alert(e.message || '비교 실패');
-            } finally {
-                setLoading(false);
-            }
-        }
-
-        function summarizePlaces(list) {
-            const count = list.length;
-            const avgRating = (list.reduce((s,p)=>s+(p.rating||0),0) / Math.max(1, count)).toFixed(2);
-            return { count, avgRating };
-        }
-
-        function showCompareOverlay(aName, aStats, bName, bStats, listA = [], listB = []) {
-            const overlayId = 'compareOverlay';
-            let ol = document.getElementById(overlayId);
-            if (!ol) {
-                ol = document.createElement('div');
-                ol.id = overlayId;
-                ol.style.position = 'fixed';
-                ol.style.left = '10%';
-                ol.style.top = '10%';
-                ol.style.width = '80%';
-                ol.style.height = '80%';
-                ol.style.background = 'var(--bg-card)';
-                ol.style.border = '1px solid var(--border)';
-                ol.style.zIndex = 2000;
-                ol.style.padding = '16px';
-                ol.style.overflow = 'auto';
-                document.body.appendChild(ol);
-            }
-            // top lists and CSV export
-            const topA = (listA || []).slice(0,10).map(p=>p.displayName?.text||p.name||'이름').join('\n');
-            const topB = (listB || []).slice(0,10).map(p=>p.displayName?.text||p.name||'이름').join('\n');
-            ol.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px"><h3>도시 비교</h3><div><button onclick="downloadCompareCSV('${encodeURIComponent(aName)}','${encodeURIComponent(bName)}')" class="radius-btn">CSV 내보내기</button> <button onclick="document.getElementById('compareOverlay').remove()">닫기</button></div></div>
-                <div style="display:flex;gap:12px">
-                    <div style="flex:1;padding:12px;border:1px solid var(--border);border-radius:8px">
-                        <h4>${aName}</h4>
-                        <p>파인다이닝 수: <strong>${aStats.count}</strong></p>
-                        <p>평균 평점: <strong>${aStats.avgRating}</strong></p>
-                        <pre style="white-space:pre-wrap;margin-top:8px;max-height:300px;overflow:auto">${topA}</pre>
-                    </div>
-                    <div style="flex:1;padding:12px;border:1px solid var(--border);border-radius:8px">
-                        <h4>${bName}</h4>
-                        <p>파인다이닝 수: <strong>${bStats.count}</strong></p>
-                        <p>평균 평점: <strong>${bStats.avgRating}</strong></p>
-                        <pre style="white-space:pre-wrap;margin-top:8px;max-height:300px;overflow:auto">${topB}</pre>
-                    </div>
-                </div>`;
-        }
-
-        function downloadCompareCSV(aName, bName) {
-            // retrieve lists from last compare call by reading fd results previously stored as globals (if any)
-            // we'll use placesData.fine_dining as fallback for left side
-            const listA = window._lastCompareA || placesData.fine_dining || [];
-            const listB = window._lastCompareB || [];
-            const rows = [];
-            const max = Math.max(listA.length, listB.length);
-            for (let i=0;i<max;i++) {
-                const a = listA[i];
-                const b = listB[i];
-                rows.push([a ? (a.displayName?.text||a.name) : '', a ? (a.formattedAddress||'') : '', b ? (b.displayName?.text||b.name) : '', b ? (b.formattedAddress||'') : '']);
-            }
-            let csv = `"${decodeURIComponent(aName)} - ${decodeURIComponent(bName)} 비교"\n"A 이름","A 주소","B 이름","B 주소"\n`;
-            rows.forEach(r=> { csv += `${r.map(c=>`"${(c||'').replace(/"/g,'""') }"`).join(',')}\n`; });
-            const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a'); a.href = url; a.download = 'compare.csv'; a.click(); URL.revokeObjectURL(url);
         }
 
         // Planner UI
@@ -2352,42 +2258,43 @@
             });
         }
 
-        async function computePlannerDay(idx) {
+        function computePlannerDay(idx) {
             const validIds = (planner.days[idx] || []).filter(Boolean);
             if (validIds.length < 2) return alert('두 개 이상의 장소가 필요합니다');
-            // build sequential legs from valid ids
             const stops = validIds.map(id => {
                 let place = null;
                 for (const col of Object.values(placesData)) { place = col.find(p=>p.id===id); if (place) break; }
                 if (!place) place = favorites.find(f=>f.id===id);
                 return place;
-            }).filter(Boolean);
+            }).filter(p => p && p.location);
 
-            let totalMeters = 0; let totalSeconds = 0;
-            for (let i=0;i<stops.length-1;i++) {
-                const a = stops[i].location; const b = stops[i+1].location;
-                if (!a || !b) continue;
-                try {
-                    const key = `${a.latitude},${a.longitude}|${b.latitude},${b.longitude}`;
-                    if (distanceCache[key]) {
-                        totalMeters += distanceCache[key].distance || 0;
-                        totalSeconds += distanceCache[key].duration || 0;
-                    } else {
-                        const dm = await fetch(`https://maps.googleapis.com/maps/api/distancematrix/json?origins=${a.latitude},${a.longitude}&destinations=${b.latitude},${b.longitude}&mode=driving&key=${API_KEY}`);
-                        const jm = await dm.json();
-                        const el = jm.rows?.[0]?.elements?.[0];
-                        if (el && el.status === 'OK') {
-                            const d = el.distance?.value || 0;
-                            const t = el.duration?.value || 0;
-                            distanceCache[key] = { distance: d, duration: t };
-                            totalMeters += d;
-                            totalSeconds += t;
-                        }
+            if (stops.length < 2) return alert('위치 정보가 있는 장소가 2개 이상 필요합니다');
+
+            const service = new google.maps.DistanceMatrixService();
+            const origins = stops.slice(0, -1).map(p => ({ lat: p.location.latitude, lng: p.location.longitude }));
+            const destinations = stops.slice(1).map(p => ({ lat: p.location.latitude, lng: p.location.longitude }));
+
+            service.getDistanceMatrix({
+                origins,
+                destinations,
+                travelMode: google.maps.TravelMode.DRIVING
+            }, (response, status) => {
+                if (status !== 'OK') {
+                    const meta = document.getElementById(`day-${idx}-meta`);
+                    if (meta) meta.textContent = '이동거리 계산 실패: ' + status;
+                    return;
+                }
+                let totalMeters = 0, totalSeconds = 0;
+                origins.forEach((_, i) => {
+                    const el = response.rows[i]?.elements[i];
+                    if (el && el.status === 'OK') {
+                        totalMeters += el.distance?.value || 0;
+                        totalSeconds += el.duration?.value || 0;
                     }
-                } catch (e) { console.warn('DistanceMatrix failed', e); }
-            }
-            const meta = document.getElementById(`day-${idx}-meta`);
-            if (meta) meta.textContent = `총 이동거리: ${Math.round(totalMeters/1000*10)/10} km · 예상 소요시간: ${Math.round(totalSeconds/60)} 분`;
+                });
+                const meta = document.getElementById(`day-${idx}-meta`);
+                if (meta) meta.textContent = `총 이동거리: ${Math.round(totalMeters/1000*10)/10} km · 예상 소요시간: ${Math.round(totalSeconds/60)} 분`;
+            });
         }
 
         function togglePrice(price) {
