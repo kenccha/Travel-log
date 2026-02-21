@@ -1707,20 +1707,29 @@
         }
 
         // Controls
-        function setRadius(radius) {
+        async function setRadius(radius) {
             currentRadius = radius;
             document.querySelectorAll('.radius-btn').forEach(btn => {
                 btn.classList.toggle('active', parseInt(btn.dataset.radius) === radius);
             });
-            
+
             // Update map zoom
             if (map && currentLocation.lat) {
                 map.setZoom(radiusToZoom[radius] || 12);
             }
-            
-            // Re-search if location is set
-            if (currentLocation.lat && currentLocation.lng) {
-                searchAllCategories();
+
+            // Clear previous results to avoid showing stale data while new search runs
+            placesData = { all: [], attraction: [], restaurant: [], cafe: [] };
+            updateCategoryCounts();
+            showSkeletonLoading();
+
+            // Always re-search when radius changes (debounced briefly to avoid rapid repeats)
+            try {
+                if (currentLocation.lat && currentLocation.lng) {
+                    await searchAllCategories();
+                }
+            } catch (e) {
+                console.error('setRadius search failed', e);
             }
         }
 
