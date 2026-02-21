@@ -1399,7 +1399,7 @@
                 headers: {
                     'Content-Type': 'application/json',
                     'X-Goog-Api-Key': API_KEY,
-                    'X-Goog-FieldMask': 'places.id,places.displayName,places.formattedAddress,places.rating,places.userRatingCount,places.priceLevel,places.types,places.photos,places.primaryType,places.location'
+                    'X-Goog-FieldMask': 'places.id,places.displayName,places.formattedAddress,places.rating,places.userRatingCount,places.priceLevel,places.types,places.photos,places.primaryType,places.location,places.currentOpeningHours'
                 },
                 body: JSON.stringify(requestBody)
             });
@@ -1426,45 +1426,7 @@
             // Note: do NOT exclude 'point_of_interest'/'establishment' globally because many valid POIs use them.
             const excludeTypes = ['shopping_mall', 'department_store', 'store', 'lodging'];
 
-            if (category === 'fine_dining') {
-                // For fine dining, use searchText endpoint semantics: query "fine dining [location]"
-                // Construct a query focused on fine dining in the location (city or place name)
-                const placeName = (currentLocation.name || '').split(',')[0] || '';
-                const queryText = `fine dining ${placeName}`.trim();
-
-                const textRequest = {
-                    query: queryText,
-                    locationRestriction: requestBody.locationRestriction,
-                    maxResultCount: requestBody.maxResultCount,
-                    rankPreference: 'RELEVANCE'
-                };
-
-                const textResp = await fetch('https://places.googleapis.com/v1/places:searchText', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'X-Goog-Api-Key': API_KEY
-                    },
-                    body: JSON.stringify(textRequest)
-                });
-
-                if (!textResp.ok) {
-                    const err = await textResp.json();
-                    throw new Error(err.error?.message || 'Places searchText API error');
-                }
-
-                const textData = await textResp.json();
-                places = textData.places || [];
-                console.debug('[PlacesAPI] category=fine_dining rawCount=', places.length);
-
-                // Enforce price filter: only expensive / very_expensive allowed, exclude unknown price
-                places = places.filter(p => {
-                    const pl = p.priceLevel;
-                    return pl === 'PRICE_LEVEL_EXPENSIVE' || pl === 'PRICE_LEVEL_VERY_EXPENSIVE';
-                });
-                console.debug('[PlacesAPI] category=fine_dining afterFilterCount=', places.length);
-
-            } else if (includedTypes && includedTypes.length > 0) {
+            if (includedTypes && includedTypes.length > 0) {
                 places = places.filter(p => {
                     // Keep if any of the place types match requested includedTypes
                     const ok = hasAnyType(p, includedTypes) || (p.primaryType && includedTypes.indexOf(p.primaryType) !== -1);
@@ -1514,7 +1476,7 @@
                 headers: {
                     'Content-Type': 'application/json',
                     'X-Goog-Api-Key': API_KEY,
-                    'X-Goog-FieldMask': 'places.id,places.displayName,places.formattedAddress,places.rating,places.userRatingCount,places.priceLevel,places.types,places.photos,places.primaryType,places.location'
+                    'X-Goog-FieldMask': 'places.id,places.displayName,places.formattedAddress,places.rating,places.userRatingCount,places.priceLevel,places.types,places.photos,places.primaryType,places.location,places.currentOpeningHours'
                 },
                 body: JSON.stringify(requestBody)
             });
@@ -1612,12 +1574,20 @@
             } else if (currentCategory === 'fine_dining') {
                 // 파인다이닝: use dedicated fine_dining search results (already price-filtered)
                 filteredPlaces = [...(placesData.fine_dining || [])];
+                // 가격 필터만 적용 (정렬은 파인다이닝 전용으로 처리)
+                if (currentPriceFilter !== 'all') {
+                    const targetPrice = parseInt(currentPriceFilter);
+                    filteredPlaces = filteredPlaces.filter(p => getPriceLevelNumber(p.priceLevel) === targetPrice);
+                }
                 // sort by rating desc, tie-breaker: price desc
                 filteredPlaces.sort((a, b) => {
                     const r = (b.rating || 0) - (a.rating || 0);
                     if (r !== 0) return r;
                     return getPriceLevelNumber(b.priceLevel) - getPriceLevelNumber(a.priceLevel);
                 });
+                renderPlaces();
+                updateMarkers();
+                return;
             } else {
                 filteredPlaces = [...(placesData[currentCategory] || [])];
             }
@@ -1720,6 +1690,7 @@
                 const rankClass = index === 0 ? 'gold' : index === 1 ? 'silver' : index === 2 ? 'bronze' : '';
                 const typeLabel = getTypeLabel(place.types);
                 const priceDisplay = getPriceDisplay(place.priceLevel);
+                const open = getOpenStatus(place);
 
                 return `
                     <div class="place-card fade-in" 
@@ -1734,7 +1705,7 @@
                                 : `<div class="no-image">📍</div>`
                             }
                                 <div class="place-rank ${rankClass}">${index + 1}</div>
-                                <div style="position:absolute;right:8px;top:8px;background:rgba(0,0,0,0.6);color:white;padding:4px 8px;border-radius:8px;font-size:12px">${getOpenStatus(place).color} ${getOpenStatus(place).text}</div>
+                                <div style="position:absolute;right:8px;top:8px;background:rgba(0,0,0,0.6);color:white;padding:4px 8px;border-radius:8px;font-size:12px">${open.color} ${open.text}</div>
                                     <button class="favorite-btn ${isFavorite ? 'active' : ''}" onclick="event.stopPropagation(); toggleFavorite('${place.id}', this)" title="즐겨찾기">
                                         ${isFavorite ? '❤️' : '🤍'}
                                     </button>
@@ -2126,7 +2097,7 @@
                 headers: {
                     'Content-Type': 'application/json',
                     'X-Goog-Api-Key': API_KEY,
-                    'X-Goog-FieldMask': 'places.id,places.displayName,places.formattedAddress,places.rating,places.userRatingCount,places.priceLevel,places.types,places.photos,places.primaryType,places.location'
+                    'X-Goog-FieldMask': 'places.id,places.displayName,places.formattedAddress,places.rating,places.userRatingCount,places.priceLevel,places.types,places.photos,places.primaryType,places.location,places.currentOpeningHours'
                 },
                 body: JSON.stringify(request)
             });
@@ -2377,10 +2348,10 @@
         }
 
         async function computePlannerDay(idx) {
-            const ids = planner.days[idx];
-            if (!ids || ids.length < 2) return alert('두 개 이상의 장소가 필요합니다');
-            // build sequential legs
-            const stops = ids.map(id => {
+            const validIds = (planner.days[idx] || []).filter(Boolean);
+            if (validIds.length < 2) return alert('두 개 이상의 장소가 필요합니다');
+            // build sequential legs from valid ids
+            const stops = validIds.map(id => {
                 let place = null;
                 for (const col of Object.values(placesData)) { place = col.find(p=>p.id===id); if (place) break; }
                 if (!place) place = favorites.find(f=>f.id===id);
