@@ -1275,6 +1275,7 @@
 
             const data = await response.json();
             let places = data.places || [];
+            console.debug('[PlacesAPI] category=', category, 'rawCount=', places.length);
 
             // Post-process: filter out obviously non-matching place types returned by the API
             function hasAnyType(place, types) {
@@ -1297,10 +1298,12 @@
                     if (hasAnyType(p, excludeTypes)) return false;
                     return true;
                 });
+                console.debug('[PlacesAPI] category=', category, 'afterFilterCount=', places.length);
             } else if (category === 'restaurant') {
                 // defensive filtering for restaurant category when includedTypes was empty
                 const restaurantSeed = categoryIncludedTypes['restaurant'];
                 places = places.filter(p => hasAnyType(p, restaurantSeed) && !hasAnyType(p, excludeTypes));
+                console.debug('[PlacesAPI] category=restaurant afterFilterCount=', places.length);
             }
 
             // Review-count based sort (popularity)
