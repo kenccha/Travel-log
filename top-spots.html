@@ -1254,9 +1254,36 @@
             }
 
             const data = await response.json();
-            const places = data.places || [];
+            let places = data.places || [];
 
-            // 리뷰 수 기준 정렬
+            // Post-process: filter out obviously non-matching place types returned by the API
+            function hasAnyType(place, types) {
+                if (!place.types || !Array.isArray(place.types)) return false;
+                for (const t of place.types) {
+                    if (types.indexOf(t) !== -1) return true;
+                }
+                return false;
+            }
+
+            // Exclude broad place types that sometimes appear in results (malls, stores, lodging, etc.)
+            const excludeTypes = ['shopping_mall', 'department_store', 'store', 'lodging', 'point_of_interest', 'establishment'];
+
+            if (includedTypes && includedTypes.length > 0) {
+                places = places.filter(p => {
+                    // Keep if any of the place types match requested includedTypes
+                    const ok = hasAnyType(p, includedTypes) || (p.primaryType && includedTypes.indexOf(p.primaryType) !== -1);
+                    if (!ok) return false;
+                    // exclude obvious non-restaurant POIs even if API returned them
+                    if (hasAnyType(p, excludeTypes)) return false;
+                    return true;
+                });
+            } else if (category === 'restaurant') {
+                // defensive filtering for restaurant category when includedTypes was empty
+                const restaurantSeed = categoryIncludedTypes['restaurant'];
+                places = places.filter(p => hasAnyType(p, restaurantSeed) && !hasAnyType(p, excludeTypes));
+            }
+
+            // Review-count based sort (popularity)
             places.sort((a, b) => (b.userRatingCount || 0) - (a.userRatingCount || 0));
 
             return places;
