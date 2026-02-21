@@ -2,7 +2,7 @@
   "name": "world-top-spots",
   "version": "1.0.0",
   "description": "전세계 도시의 인기 장소를 Google Places API로 찾아주는 웹 앱.",
-  "main": "keys.example.js",
+  "main": "top-spots.html",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
   },
