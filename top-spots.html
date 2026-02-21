@@ -956,17 +956,8 @@
         <span id="locationStatusText">위치를 가져오는 중...</span>
     </div>
 
-    <!-- keys.js must load before main script so API_KEY is available -->
-    <script src="keys.js"></script>
-
     <script>
-        // Load browser API key from external, non-committed file `keys.js`.
-        // Create `keys.js` locally with: window.APP_KEYS = { BROWSER_KEY: 'YOUR_BROWSER_KEY' };
-        // Keep `keys.js` out of git (see .gitignore added to repo).
-        const API_KEY = window.APP_KEYS?.BROWSER_KEY || null;
-        if (!API_KEY) {
-            console.warn('No Google BROWSER API key found. Copy keys.example.js -> keys.js and set BROWSER_KEY.');
-        }
+        const API_KEY = 'AIzaSyCqSLJUWJnLLrXpXFzEwQqcTf3-7prKa-4';
         
         // State
         let currentLocation = { name: '', lat: null, lng: null };
@@ -1724,19 +1715,8 @@
         });
     </script>
 
-    <!-- Load Google Maps with the browser key from keys.js (already loaded above) -->
-    <script>
-        (function loadMaps() {
-            if (!window.APP_KEYS?.BROWSER_KEY) {
-                console.warn('No browser API key found. Copy keys.example.js to keys.js and set your key.');
-            }
-            const key = window.APP_KEYS?.BROWSER_KEY || '';
-            const s = document.createElement('script');
-            s.async = true;
-            s.defer = true;
-            s.src = 'https://maps.googleapis.com/maps/api/js?key=' + encodeURIComponent(key) + '&callback=initMap';
-            document.head.appendChild(s);
-        })();
+    <script async defer
+        src="https://maps.googleapis.com/maps/api/js?key=AIzaSyCqSLJUWJnLLrXpXFzEwQqcTf3-7prKa-4&callback=initMap">
     </script>
 </body>
 </html>
