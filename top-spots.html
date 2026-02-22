@@ -1154,7 +1154,7 @@
         document.addEventListener('DOMContentLoaded', initFirebase);
     </script>
     <script>
-        const API_KEY = 'AIzaSyCqSLJUWJnLLrXpXFzEwQqcTf3-7prKa-4';
+        const API_KEY = window.APP_KEYS?.BROWSER_KEY || '';
         
         // State
         let currentLocation = { name: '', lat: null, lng: null };
@@ -1184,6 +1184,10 @@
         // Distance Matrix cache (session) to reduce repeated requests: key = originLat,originLng|destLat,destLng
         const distanceCache = {};
         let filteredPlaces = [];
+
+        // 커스텀 키워드 검색 상태 (placesData.all을 덮어쓰지 않기 위해 별도 관리)
+        let customSearchData = [];
+        let isCustomSearchActive = false;
         
         // 즐겨찾기: 전체 정보 저장 (ID만 저장하면 다른 도시에서 못 불러옴)
         let favorites = JSON.parse(localStorage.getItem('favorites_v2') || '[]');
@@ -1261,13 +1265,13 @@
                         const curIndex = radiusSteps.findIndex(r => r === currentRadius);
                         const index = curIndex === -1 ? radiusSteps.findIndex(r => r >= currentRadius) : curIndex;
                         if (e.deltaY < 0) {
-                            // scroll up -> wider
-                            const nextIndex = Math.min((index === -1 ? 0 : index) + 1, radiusSteps.length - 1);
+                            // scroll up -> narrower (줌인과 동일한 방향)
+                            const nextIndex = Math.max((index === -1 ? 0 : index) - 1, 0);
                             const next = radiusSteps[nextIndex];
                             if (next !== currentRadius) setRadius(next);
                         } else {
-                            // scroll down -> narrower
-                            const nextIndex = Math.max((index === -1 ? 0 : index) - 1, 0);
+                            // scroll down -> wider (줌아웃과 동일한 방향)
+                            const nextIndex = Math.min((index === -1 ? 0 : index) + 1, radiusSteps.length - 1);
                             const next = radiusSteps[nextIndex];
                             if (next !== currentRadius) setRadius(next);
                         }
@@ -1345,6 +1349,7 @@
                         updateMapCenter();
                         await searchAllCategories();
                     } else {
+                        setLoading(false);
                         showLocationChoices(list);
                     }
                 } else {
@@ -1480,9 +1485,8 @@
                     saveRecentCity(currentLocation.name, currentLocation.lat, currentLocation.lng);
                     ol.remove();
                     updateMapCenter();
-                    setLoading(true);
-                    try { await searchAllCategories(); } catch(e){ console.error(e); }
-                    setLoading(false);
+                    // searchAllCategories 내부에서 setLoading(true/false) 처리하므로 중복 호출 불필요
+                    try { await searchAllCategories(); } catch(e){ console.error(e); setLoading(false); }
                 };
                 box.appendChild(p);
             });
@@ -1518,6 +1522,10 @@
         // Search all categories
         async function searchAllCategories() {
             if (!currentLocation.lat || !currentLocation.lng) return;
+
+            // 새 장소 검색 시 커스텀 검색 상태 초기화
+            isCustomSearchActive = false;
+            customSearchData = [];
 
             setLoading(true);
             const maxCount = parseInt(document.getElementById('countSelect').value);
@@ -1769,7 +1777,10 @@
                 updateMarkers();
                 return;
             } else {
-                filteredPlaces = [...(placesData[currentCategory] || [])];
+                // 커스텀 키워드 검색 활성 상태이면 해당 결과 사용 (placesData.all 보존)
+                filteredPlaces = (isCustomSearchActive && currentCategory === 'all')
+                    ? [...customSearchData]
+                    : [...(placesData[currentCategory] || [])];
             }
 
             // 가격 필터
@@ -1836,12 +1847,15 @@
             const locationName = currentLocation.name ? 
                 currentLocation.name.split(',')[0] : '검색 결과';
             
-            title.textContent = `${locationName} - ${categoryNames[currentCategory]}`;
+            const customSuffix = (isCustomSearchActive && currentCategory === 'all')
+                ? ` · 키워드: "${document.getElementById('customQuery').value.trim()}"`
+                : '';
+            title.textContent = `${locationName} - ${categoryNames[currentCategory]}${customSuffix}`;
             count.textContent = `${filteredPlaces.length}개 장소`;
             
             // API 제한 안내
             const maxCount = parseInt(document.getElementById('countSelect').value);
-            apiNote.style.display = (maxCount > 20 && currentCategory !== 'favorites') ? 'inline' : 'none';
+            apiNote.style.display = (maxCount >= 20 && currentCategory !== 'favorites') ? 'inline' : 'none';
 
             if (filteredPlaces.length === 0) {
                 const isFavorites = currentCategory === 'favorites';
@@ -2250,8 +2264,9 @@
                 populateRecentQueriesDatalist();
                 const maxCount = parseInt(document.getElementById('countSelect').value);
                 const data = await searchPlacesByTextQuery(q, maxCount);
-                // put results into a temporary category and render
-                placesData.all = data;
+                // 커스텀 검색 결과는 별도 상태에 저장 (placesData.all 보존)
+                customSearchData = data;
+                isCustomSearchActive = true;
                 currentCategory = 'all';
                 updateCategoryCounts();
                 applySortAndFilter();
