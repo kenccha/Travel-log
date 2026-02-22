@@ -1531,8 +1531,8 @@
             const maxCount = parseInt(document.getElementById('countSelect').value);
 
             try {
-                // 모든 카테고리 병렬 검색
-                const [allResults, attractionResults, restaurantResults, cafeResults, lodgingResults, fineDiningResults] = await Promise.all([
+                // 모든 카테고리 병렬 검색 (allSettled: 하나 실패해도 나머지 표시)
+                const settled = await Promise.allSettled([
                     searchPlacesByCategory('all', maxCount),
                     searchPlacesByCategory('attraction', maxCount),
                     searchPlacesByCategory('restaurant', maxCount),
@@ -1541,12 +1541,40 @@
                     searchFineDining(maxCount)
                 ]);
 
-                placesData.all = allResults;
-                placesData.attraction = attractionResults;
-                placesData.restaurant = restaurantResults;
-                placesData.cafe = cafeResults;
-                placesData.lodging = lodgingResults;
-                placesData.fine_dining = fineDiningResults;
+                const [allR, attrR, restR, cafeR, lodgR, fineR] = settled;
+
+                // 실패한 카테고리 로그
+                settled.forEach((r, i) => {
+                    const names = ['all','attraction','restaurant','cafe','lodging','fine_dining'];
+                    if (r.status === 'rejected') {
+                        console.warn(`[Search] ${names[i]} 카테고리 실패:`, r.reason?.message);
+                    }
+                });
+
+                // 모든 카테고리가 전부 실패한 경우에만 에러 표시
+                if (settled.every(r => r.status === 'rejected')) {
+                    throw new Error(settled[0].reason?.message || '검색 결과를 불러올 수 없습니다.');
+                }
+
+                placesData.all        = allR.status  === 'fulfilled' ? allR.value  : [];
+                placesData.attraction = attrR.status === 'fulfilled' ? attrR.value : [];
+                placesData.restaurant = restR.status === 'fulfilled' ? restR.value : [];
+                placesData.cafe       = cafeR.status === 'fulfilled' ? cafeR.value : [];
+                placesData.lodging    = lodgR.status === 'fulfilled' ? lodgR.value : [];
+                placesData.fine_dining = fineR.status === 'fulfilled' ? fineR.value : [];
+
+                // 일부 실패 시 사용자에게 경고 배너 표시
+                const failedCategories = settled
+                    .map((r, i) => r.status === 'rejected' ? ['전체','관광지','음식점','카페','숙박','파인다이닝'][i] : null)
+                    .filter(Boolean);
+                if (failedCategories.length > 0) {
+                    const note = document.getElementById('apiLimitNote');
+                    if (note) {
+                        note.textContent = `⚠️ ${failedCategories.join(', ')} 카테고리 로드 실패 (반경이 너무 넓거나 API 한도 초과)`;
+                        note.style.display = 'inline';
+                        note.style.color = 'var(--warning)';
+                    }
+                }
 
                 updateCategoryCounts();
                 applySortAndFilter();
@@ -1610,25 +1638,66 @@
                 return false;
             }
 
-            // Exclude obvious non-matching POI types that frequently pollute restaurant results
-            // Note: do NOT exclude 'point_of_interest'/'establishment' globally because many valid POIs use them.
-            const excludeTypes = ['shopping_mall', 'department_store', 'store'];
+            // ── 공통 제외 타입 (전체 카테고리 공통) ──
+            const globalExcludeTypes = ['shopping_mall', 'department_store', 'store'];
+
+            // ── 카테고리별 primaryType 블랙리스트 ──
+            // 숙박 타입: restaurant/cafe/attraction 탭에 호텔 등 침투 방지
+            const lodgingTypes  = ['lodging', 'hotel', 'guest_house', 'motel', 'inn', 'hostel', 'bed_and_breakfast'];
+            // 바/클럽 타입: restaurant 탭에 침투 방지 (cafe 탭은 허용)
+            const barTypes      = ['bar', 'night_club', 'pub'];
+
+            // 카테고리별로 primaryType이 이 목록에 해당하면 제외
+            const primaryTypeBlacklist = {
+                restaurant: [...lodgingTypes, ...barTypes],
+                attraction: [...lodgingTypes],
+                cafe:       [...lodgingTypes],
+                lodging:    [],  // 숙박 탭은 제한 없음
+                all:        [...lodgingTypes]
+            };
+            const ptBlacklist = primaryTypeBlacklist[category] || [];
 
             if (includedTypes && includedTypes.length > 0) {
                 places = places.filter(p => {
-                    // Keep if any of the place types match requested includedTypes
+                    // includedTypes 중 하나 이상이 매칭돼야 통과
                     const ok = hasAnyType(p, includedTypes) || (p.primaryType && includedTypes.indexOf(p.primaryType) !== -1);
                     if (!ok) return false;
-                    // exclude obvious non-restaurant POIs even if API returned them
-                    if (hasAnyType(p, excludeTypes)) return false;
+                    // 공통 제외
+                    if (hasAnyType(p, globalExcludeTypes)) return false;
+                    // primaryType 블랙리스트 (예: 음식점 탭에 숙박/바 primaryType 제거)
+                    if (p.primaryType && ptBlacklist.includes(p.primaryType)) return false;
                     return true;
                 });
                 console.debug('[PlacesAPI] category=', category, 'afterFilterCount=', places.length);
             } else if (category === 'restaurant') {
-                // defensive filtering for restaurant category when includedTypes was empty
                 const restaurantSeed = categoryIncludedTypes['restaurant'];
-                places = places.filter(p => hasAnyType(p, restaurantSeed) && !hasAnyType(p, excludeTypes));
+                places = places.filter(p =>
+                    hasAnyType(p, restaurantSeed) &&
+                    !hasAnyType(p, globalExcludeTypes) &&
+                    !(p.primaryType && ptBlacklist.includes(p.primaryType))
+                );
                 console.debug('[PlacesAPI] category=restaurant afterFilterCount=', places.length);
+            }
+
+            // ── 전체(all) 탭: 인프라/유틸리티 타입 제거 ──
+            // 타입 필터 없이 요청하면 은행·주유소·대중교통·학교 등이 상위에 올라오는 문제 방지
+            if (category === 'all') {
+                const infraTypes = [
+                    'transit_station', 'bus_station', 'subway_station', 'train_station', 'airport',
+                    'gas_station', 'parking', 'car_wash', 'car_repair', 'car_dealer',
+                    'bank', 'atm', 'insurance_agency', 'real_estate_agency',
+                    'hospital', 'doctor', 'dentist', 'pharmacy', 'physiotherapist',
+                    'school', 'university', 'primary_school', 'secondary_school',
+                    'laundry', 'storage', 'post_office', 'police',
+                    ...globalExcludeTypes,
+                    ...lodgingTypes
+                ];
+                places = places.filter(p => {
+                    if (hasAnyType(p, infraTypes)) return false;
+                    if (p.primaryType && infraTypes.includes(p.primaryType)) return false;
+                    return true;
+                });
+                console.debug('[PlacesAPI] category=all afterInfraFilterCount=', places.length);
             }
 
             // Review-count based sort (popularity)
